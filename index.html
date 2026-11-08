@@ -390,6 +390,7 @@
     let actx=null, gain=null, started=false;
     function setupAudio(){
       if(actx) return;
+      try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
       try{ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
         actx=new AC(); const src=actx.createMediaElementSource(song); gain=actx.createGain(); src.connect(gain); gain.connect(actx.destination);
       }catch(e){ actx=null; gain=null; }
@@ -397,18 +398,21 @@
     const setVol=v=>{ v=Math.max(0,Math.min(1,v)); if(gain) gain.gain.value=v; else { try{song.volume=v;}catch(e){} } };
     const toStart=()=>{ try{ song.currentTime=START; }catch(e){} };
     const setIcon=()=>{ icon.textContent = song.paused ? '▶' : '❚❚'; };
-    function start(){
-      if(started) return; started=true;
+    function start(preroll){
+      if(started && !song.paused) return; started=true;
+      preroll = preroll||0;
       setupAudio(); if(actx&&actx.state==='suspended') actx.resume();
-      if(song.readyState>=1){ if(song.currentTime<START-1||song.currentTime>END) toStart(); }
-      else song.addEventListener('loadedmetadata',()=>{ if(song.currentTime<START-1) toStart(); },{once:true});
+      const from = START - preroll;
+      try{ song.currentTime = from; }catch(e){}
+      if(song.readyState<1) song.addEventListener('loadedmetadata',()=>{ try{ song.currentTime = from; }catch(e){} },{once:true});
       setVol(0);
-      const p=song.play(); if(p&&p.catch) p.catch(()=>{ started=false; });
+      const p=song.play();
+      if(p&&p.catch) p.catch(()=>{ started=false; btn.style.display=''; btn.classList.add('nudge'); setIcon(); });
     }
     (function tick(){
       if(!song.paused){ const t=song.currentTime;
-        if(t>=END-0.05||t<START-1){ setVol(0); toStart(); }
-        else setVol(Math.min((t-START)/FADE_IN,(END-t)/(END-FADE_OUT_AT),1)); }
+        if(t>=END-0.05||t<START-3){ setVol(0); toStart(); }
+        else setVol(t<START?0:Math.min((t-START)/FADE_IN,(END-t)/(END-FADE_OUT_AT),1)); }
       requestAnimationFrame(tick);
     })();
     song.addEventListener('play',()=>{ btn.classList.remove('nudge'); setIcon(); });
@@ -419,7 +423,7 @@
       setupAudio(); if(actx&&actx.state==='suspended') actx.resume();
       try{ setVol(0); const p=song.play(); if(p&&p.then) p.then(()=>{ if(!started) song.pause(); }).catch(()=>{}); else if(!started) song.pause(); }catch(e){}
     }
-    window.cdStartSong=start; window.cdUnlockSong=unlock;
+    window.cdStartSong=start;
     document.addEventListener('pointerdown',e=>{ if(e.target.closest('#mbtn')) return; const g=document.getElementById('gate'); if(g&&!g.classList.contains('done')) return; if(song.paused&&!started) start(); },{capture:true});
     btn.addEventListener('pointerdown',e=>e.stopPropagation());
     btn.addEventListener('click',e=>{
@@ -461,6 +465,9 @@
       if(Math.hypot(pos.x-MER.x,pos.y-MER.y)<=HIT) land(); else back();
     };
     plane.addEventListener('pointerup',end); plane.addEventListener('pointercancel',end);
+    let landedAt=0;
+    plane.addEventListener('touchend',()=>{ setTimeout(()=>{ const s=document.getElementById('song');
+      if(done && s && s.paused && window.cdStartSong){ const left=Math.max(0,1.5-(performance.now()-landedAt)/1000); try{ window.cdStartSong(left); }catch(_e){} } },0); });
     function back(){
       say('Casi… ¡hasta Mérida! 💕');
       const from={...pos}, t0=performance.now(), D=650;
@@ -471,9 +478,9 @@
     function land(){
       done=true;
       // this drag counts as her tap, so the song is allowed to play with sound
-      // her drag counts as a tap: unlock sound now, start the song 1.5 seconds later as the countdown appears
-      if(window.cdUnlockSong) try{ window.cdUnlockSong(); }catch(_e){}
-      setTimeout(()=>{ if(window.cdStartSong) try{ window.cdStartSong(); }catch(_e){} }, 1500);
+      // start inside her drag so iPhone allows sound; it stays silent for 1.5s, then the song comes in at 0:48
+      landedAt=performance.now();
+      if(window.cdStartSong) try{ window.cdStartSong(1.5); }catch(_e){}
       const btn=document.getElementById('mbtn'); if(btn) btn.style.display='';
       const from={...pos}, t0=performance.now(), D=450;
       (function step(now){ const k=Math.min(1,(now-t0)/D), e=1-Math.pow(1-k,3);
